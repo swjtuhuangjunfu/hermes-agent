@@ -169,6 +169,16 @@ from gateway.run_turn_hygiene import GatewayTurnHygieneMixin
 from gateway.run_turn_persistence import GatewayTurnPersistenceMixin
 
 
+def adapter_supports_editing(adapter: Any, chat_id: Optional[str]) -> bool:
+    """Whether *adapter* can edit a message it sent to *chat_id*. An adapter fronting several
+    platforms (the relay) answers per chat through ``supports_message_editing_for_chat``; every
+    other adapter answers with its ``SUPPORTS_MESSAGE_EDITING`` class attribute."""
+    per_chat = getattr(adapter, "supports_message_editing_for_chat", None)
+    if callable(per_chat) and chat_id is not None:
+        return bool(per_chat(str(chat_id)))
+    return bool(getattr(adapter, "SUPPORTS_MESSAGE_EDITING", True))
+
+
 class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, GatewayTurnPersistenceMixin):
     """Agent-turn execution for GatewayRunner (see module docstring)."""
 
@@ -564,7 +574,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                 _adapter.pause_typing_for_chat(_chat_id)
         # Non-editing platforms (QQ, WeChat) skip streaming — the partial first message could never
         # be updated — unless they have a native-streaming transport (WeCom msgtype "stream").
-        _adapter_supports_edit = getattr(adapter, "SUPPORTS_MESSAGE_EDITING", True)
+        _adapter_supports_edit = adapter_supports_editing(adapter, source.chat_id)
         _adapter_supports_native_stream = bool(getattr(adapter, "SUPPORTS_NATIVE_STREAMING", False))
         if not _adapter_supports_edit and not _adapter_supports_native_stream and on_missing_cursor == "raise":
             raise RuntimeError("skip streaming for non-editable platform")

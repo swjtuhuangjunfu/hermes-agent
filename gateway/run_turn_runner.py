@@ -304,11 +304,12 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                                  and not held and not _finite_viewer_turn())
         if want_stream_deltas or want_interim_messages:
             try:
+                from gateway.run_turn import adapter_supports_editing
                 from gateway.stream_consumer import GatewayStreamConsumer
                 adapter = self._runner._delivery_adapter_for(ctx.source)
                 if adapter:
                     supports_incremental_stream = (
-                        getattr(adapter, "SUPPORTS_MESSAGE_EDITING", True)
+                        adapter_supports_editing(adapter, ctx.source.chat_id)
                         or bool(getattr(adapter, "SUPPORTS_NATIVE_STREAMING", False))
                     )
                     consumer_stream_deltas = want_stream_deltas and supports_incremental_stream

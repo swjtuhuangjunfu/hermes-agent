@@ -265,6 +265,13 @@ class RelayAdapter(RelayDiscordInteractionMixin, BasePlatformAdapter):
         per_platform = self._negotiated_descriptor(self._platform_by_chat.get(str(chat_id)))
         return per_platform if per_platform is not None else self.descriptor
 
+    def supports_message_editing_for_chat(self, chat_id: str) -> bool:
+        """Whether this chat's connector can edit a sent message: the descriptor's ``supports_edit``
+        and, when the connector advertises ``supported_ops``, an ``edit`` op. The gateway skips
+        streaming when False, since every update it cannot edit would go out as a new message."""
+        desc = self._descriptor_for_chat(chat_id)
+        return bool(desc.supports_edit) and desc.supports_op("edit")
+
     def max_message_length_for_chat(self, chat_id: str) -> int:
         return self._descriptor_for_chat(chat_id).max_message_length
 
