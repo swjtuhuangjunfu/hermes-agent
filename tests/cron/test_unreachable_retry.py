@@ -195,3 +195,35 @@ def test_ladder_reruns_do_not_spend_extra_repeat_budget(tmp_cron_home, monkeypat
     assert held == [True, True, True, False]
     # But a rung whose limit was edited down to the count does retire the job: send its notice.
     assert not ur.will_retry(dict(runs[1], repeat={"times": 1, "completed": 1}))
+
+
+@pytest.mark.parametrize("edit", [
+    {"schedule": "0 13 * * *"},
+    {"timezone": "Asia/Tokyo"},
+], ids=["expression", "timezone"])
+def test_schedule_edit_starts_a_fresh_ladder(tmp_cron_home, monkeypatch, edit):
+    """#154399: editing the expression or pinned timezone recomputes the next occurrence, so
+    the previous occurrence's retry attempt must not carry over. The first unreachable failure
+    of the new occurrence parks the FIRST rung (5 min), not the second."""
+    from cron.jobs import update_job
+
+    clock = {"now": datetime(2026, 11, 12, 9, 0, tzinfo=UTC)}
+    monkeypatch.setattr("cron.jobs._hermes_now", lambda: clock["now"])
+    monkeypatch.setattr(ur, "_hermes_now", lambda: clock["now"])
+
+    job = create_job("daily report", "0 9 * * *")
+    assert mark_job_run(job["id"], False, "ConnectError: dns", model_unreachable=True)
+    assert get_job(job["id"])[ur.STATE_KEY]["attempt"] == 1
+
+    if "schedule" in edit:
+        from cron.jobs import parse_schedule
+        edit = {"schedule": parse_schedule(edit["schedule"])}
+    edited = update_job(job["id"], edit)
+    assert edited.get(ur.STATE_KEY) is None
+
+    clock["now"] = datetime.fromisoformat(edited["next_run_at"]) + timedelta(seconds=1)
+    assert mark_job_run(job["id"], False, "ConnectError: dns", model_unreachable=True)
+    j = get_job(job["id"])
+    assert j[ur.STATE_KEY]["attempt"] == 1
+    assert datetime.fromisoformat(j["next_run_at"]) == clock["now"] + timedelta(
+        seconds=ur.RETRY_DELAYS_SECONDS[0])
