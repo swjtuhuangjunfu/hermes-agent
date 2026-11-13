@@ -45,6 +45,25 @@ def gateway_ws_target(endpoint, ticket):
     return url, [GATEWAY_WS_PROTOCOL, GATEWAY_WS_TICKET_PREFIX + ticket]
 
 
+def _is_loopback_ws_url(url):
+    """True when ``url`` dials a loopback host (``localhost`` or a loopback IP)."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 class GatewayClientError(ValueError):
     pass
 
@@ -381,8 +400,14 @@ async def connect_gateway(endpoint=None, subject=None, *, max_size=8 * 1024 * 10
         # The gateway is a loopback (or explicitly named) peer, never something to route through the
         # user's HTTP(S) proxy; websockets>=14 reads HTTP_PROXY/HTTPS_PROXY by default and a proxy that
         # cannot reach 127.0.0.1 turns every launch into a 10 s open timeout.
+        # The owner answers pings on the event loop that also runs the agent turn, so a busy turn
+        # can miss the websockets default 20 s pong deadline and the client would close a healthy
+        # socket with 1011 "keepalive ping timeout" (#154910). A dead loopback peer sends a real
+        # FIN/RST, so the ping buys nothing there; the dashboard server makes the same call for
+        # loopback binds (web_server.py). Non-loopback owners keep the library default.
+        keepalive = {"ping_interval": None, "ping_timeout": None} if _is_loopback_ws_url(url) else {}
         async with connect(url, subprotocols=protocols, open_timeout=10, max_size=max_size,
-                           proxy=None) as ws:
+                           proxy=None, **keepalive) as ws:
             if protocols and ws.subprotocol != GATEWAY_WS_PROTOCOL:
                 raise GatewayClientError("Gateway protocol mismatch; update/restart required")
             async with GatewayClient(ws) as client:
