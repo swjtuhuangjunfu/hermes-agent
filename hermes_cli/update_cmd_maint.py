@@ -21,6 +21,22 @@ from datetime import UTC
 logger = logging.getLogger("hermes_cli.update_cmd")
 
 
+def _git_failure_detail(exc: BaseException) -> str:
+    """One line that explains a failed git call: its ``fatal:``/``error:`` line, else its last line.
+
+    git puts the actionable part first; a lock failure's path is on the ``fatal:`` line and its
+    last line is the generic "remove the file manually to continue." (#154940).
+    """
+    stderr = getattr(exc, "stderr", None)
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", "replace")
+    lines = [line.strip() for line in (stderr or str(exc)).splitlines() if line.strip()]
+    for line in lines:
+        if line.startswith(("fatal:", "error:")):
+            return line
+    return lines[-1] if lines else type(exc).__name__
+
+
 def _prepare_updated_checkout(project_root: Path, *, desktop: bool) -> None:
     """Historical updater hook: never complete inside the pre-swap interpreter."""
     from hermes_cli._old_updater import stop_for_relaunch
@@ -1028,8 +1044,8 @@ def _run_post_update_maintenance(
         if fetch_full_commit_graph(Path(_m().PROJECT_ROOT), **_no_prompt_git_kwargs()):
             print("  ✓ Fetched release history (commits only) for version identity")
     except (OSError, subprocess.SubprocessError) as exc:
-        detail = (getattr(exc, "stderr", None) or str(exc)).strip().splitlines()[-1:] or [type(exc).__name__]
-        print(f"  ⚠ Could not refresh release history ({detail[0]}); the version label may be stale or unknown until the next update")
+        detail = _git_failure_detail(exc)
+        print(f"  ⚠ Could not refresh release history ({detail}); the version label may be stale or unknown until the next update")
     # Keeps every later version lookup off a full history walk; detached, so it never delays this run.
     with _best_effort('Commit-graph refresh failed to start: %s'):
         from hermes_cli.git_commit_graph import spawn_commit_graph_refresh
